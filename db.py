@@ -1,5 +1,9 @@
 import sqlite3
 import hashlib
+from encryption import *
+import constants
+import functools
+import random
 
 
 def main():
@@ -15,7 +19,7 @@ def main():
     conn.execute(''' CREATE TABLE IF NOT EXISTS User
                      ( id INTEGER PRIMARY KEY AUTOINCREMENT,
                        name TEXT NOT NULL,
-                       phone_number TEXT NOT NULL,
+                       chat_id TEXT NOT NULL,
                        FOREIGN KEY(name) REFERENCES Account(name)) ''')
 
     # create Camera table
@@ -36,7 +40,7 @@ def create_new_account(name, password):
         conn.execute('''
                        INSERT INTO Account (name, password)
                        VALUES(?,?)
-                       ''', [name, hash_password(password)])
+                       ''', [rsa_encrypt(constants.server_to_db_public_key, name), hash_password(password)])
     except sqlite3.IntegrityError as e:
         result = e
 
@@ -47,11 +51,11 @@ def create_new_account(name, password):
         raise result
 
 
-def create_new_user(name, phone_num):
+def create_new_user(name, chat_id):
     conn = sqlite3.connect("watchdog.db")
 
-    conn.execute("INSERT INTO User (name, phone_number) VALUES (?, ?)",
-                 [name, phone_num])
+    conn.execute("INSERT INTO User (name, chat_id) VALUES (?, ?)",
+                 [rsa_encrypt(constants.server_to_db_public_key, name), rsa_encrypt(constants.server_to_db_public_key, chat_id)])
 
     conn.commit()
     conn.close()
@@ -61,7 +65,7 @@ def create_new_camera(name):
     conn = sqlite3.connect("watchdog.db")
 
     conn.execute("INSERT INTO Camera (name, linked_users) VALUES (?, ?)",
-                 [name, ""])
+                 [rsa_encrypt(constants.server_to_db_public_key, name), ""])
 
     conn.commit()
     conn.close()
@@ -72,7 +76,7 @@ def login(name, password):
     conn = sqlite3.connect("watchdog.db")
     cursor = conn.cursor()
 
-    cursor.execute('SELECT * FROM Account WHERE name = ?', (name,))
+    cursor.execute('SELECT * FROM Account WHERE name = ?', (rsa_encrypt(constants.server_to_db_public_key, name),))
     account = cursor.fetchone()
 
     if account:
@@ -89,11 +93,22 @@ def login(name, password):
         raise result
 
 
+def get_chat_id(name):
+    conn = sqlite3.connect("watchdog.db")
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM User WHERE name = ?', (rsa_encrypt(constants.server_to_db_public_key, name),))
+    chat_id = rsa_decrypt(constants.server_to_db_private_key, cursor.fetchone()[2])
+
+    conn.close()
+    return chat_id
+
+
 def get_user_id(name):
     conn = sqlite3.connect("watchdog.db")
     cursor = conn.cursor()
 
-    cursor.execute('SELECT * FROM User WHERE name = ?', (name,))
+    cursor.execute('SELECT * FROM User WHERE name = ?', (rsa_encrypt(constants.server_to_db_public_key, name),))
     uid = cursor.fetchone()[0]
 
     conn.close()
@@ -104,7 +119,7 @@ def get_camera_id(name):
     conn = sqlite3.connect("watchdog.db")
     cursor = conn.cursor()
 
-    cursor.execute('SELECT * FROM Camera WHERE name = ?', (name,))
+    cursor.execute('SELECT * FROM Camera WHERE name = ?', (rsa_encrypt(constants.server_to_db_public_key, name),))
     cid = cursor.fetchone()[0]
 
     conn.close()
@@ -116,7 +131,7 @@ def get_account_type(name):
     cursor = conn.cursor()
     result = ""
 
-    cursor.execute('SELECT * FROM User WHERE name = ?', (name,))
+    cursor.execute('SELECT * FROM User WHERE name = ?', (rsa_encrypt(constants.server_to_db_public_key, name),))
     info = cursor.fetchone()
 
     if info is not None:
@@ -128,8 +143,39 @@ def get_account_type(name):
     return result
 
 
+def get_camera_subscriptions(cid):
+    conn = sqlite3.connect("watchdog.db")
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM Camera WHERE id = ?', (cid,))
+    linked_users = cursor.fetchone()[2]
+    if linked_users == '':
+        subs = []
+    else:
+        subs = rsa_decrypt(constants.server_to_db_private_key, linked_users).split(',')
+
+    conn.close()
+    return subs
+
+
+def subscribe_to_camera(username, cid):
+    subs = get_camera_subscriptions(cid)
+    print(subs)
+    subs.append(username)
+    subs = list(set(subs))
+    subs_to_db = functools.reduce(lambda x, y: f"{x},{y}", subs)
+    print(subs_to_db)
+
+    conn = sqlite3.connect("watchdog.db")
+    cursor = conn.cursor()
+
+    cursor.execute('UPDATE Camera SET linked_users = ? WHERE id = ?', (rsa_encrypt(constants.server_to_db_public_key, subs_to_db), cid))
+    conn.commit()
+    conn.close()
+
+
 def hash_password(password):
-    password_hash = hashlib.sha256(b"salt" + password.encode()).hexdigest()
+    password_hash = hashlib.sha256(b"arbitrary" + password.encode()).hexdigest()
     return password_hash
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+"""
 import cv2
 
 def count_connected_cameras():
@@ -15,33 +16,20 @@ def count_connected_cameras():
 
 	return camera_count
 
-# CONSTANTS & IMPORTANT VARIABLES
-num_of_cameras = count_connected_cameras()
-curr_camera = 0
+print(count_connected_cameras())
+"""
 
-# Define a video capture object
-vid = cv2.VideoCapture(curr_camera)
+import cv2
+import numpy as np
 
-# Declare the width and height in variables
-width, height = 800, 600
+# Read input image
+img = cv2.imread('no_video.jpg')
 
-# Set the width and height
-vid.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-vid.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+# Mirror in x direction (flip horizontally)
+imgX = np.flip(img, axis=1)
+# imgX = imgX = img[:, ::-1, :]
+print(type(imgX))
 
-def switch_between_cameras():
-	global curr_camera, vid
-	curr_camera = (curr_camera + 1) % num_of_cameras
-	try:
-		# Define a video capture object
-		vid = cv2.VideoCapture(curr_camera)
-
-		# Declare the width and height in variables
-		width, height = 800, 600
-
-		# Set the width and height
-		vid.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-		vid.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-
-	except Exception as e:
-		print(e)
+# Outputs
+cv2.imshow('imgX', imgX)
+cv2.waitKey(0)

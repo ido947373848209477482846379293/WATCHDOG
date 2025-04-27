@@ -4,7 +4,9 @@ import threading
 from win32api import MessageBox
 from win32con import MB_OK, MB_ICONINFORMATION
 import camera
+import constants
 import user
+from encryption import *
 
 
 class LoginOrRegisterWindow(CTk):
@@ -41,7 +43,7 @@ class LoginWindow(CTk):
         client_socket.send("login".encode())
         print(client_socket.recv(1024).decode())
 
-        client_socket.send(f"{self.username_entry.get()}, {self.password_entry.get()}".encode())
+        client_socket.send(rsa_encrypt(constants.client_to_server_public_key, f"{self.username_entry.get()}, {self.password_entry.get()}").encode())
         answer = client_socket.recv(1024).decode()
 
         if "Wrong password" in answer:
@@ -56,9 +58,11 @@ class LoginWindow(CTk):
             if answer.split()[0] == "User":
                 launch_program_btn = CTkButton(self, text="Launch program", command=lambda: create_user_window(self))
                 launch_program_btn.pack()
-            else:
+            elif answer.split()[0] == "Camera":
                 launch_program_btn = CTkButton(self, text="Launch program", command=lambda: create_camera_window(self))
                 launch_program_btn.pack()
+            else:
+                print("wtf")
 
 
 
@@ -88,14 +92,14 @@ class RegisterWindow(CTk):
         client_socket.send("register".encode())
         print(client_socket.recv(1024).decode())
 
-        client_socket.send(f"{self.username_entry.get()}, {self.password_entry.get()}, {self.account_type.get()}".encode())
+        client_socket.send(rsa_encrypt(constants.client_to_server_public_key, f"{self.username_entry.get()}, {self.password_entry.get()}, {self.account_type.get()}").encode())
         answer = client_socket.recv(1024).decode()
 
         if answer == "Attempted username is taken":
             MessageBox(0, answer, 'Error', MB_OK | MB_ICONINFORMATION)
-        elif answer == "Phone number needed":
-            dialog = CTkInputDialog(text="Type in your phone number", title="Phone number needed")
-            client_socket.send(dialog.get_input().encode())
+        elif answer == "verification code needed":
+            dialog = CTkInputDialog(text="Message @WatchdogCameraBot on Telegram and get your verification code", title="Verify your account")
+            client_socket.send(rsa_encrypt(constants.client_to_server_public_key, f"{dialog.get_input()}").encode())
             MessageBox(0, client_socket.recv(1024).decode(), 'Success', MB_OK | MB_ICONINFORMATION)
 
             launch_program_btn = CTkButton(self, text="Launch program", command=lambda: create_user_window(self))

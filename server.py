@@ -1,11 +1,13 @@
 import socket, select
 import sqlite3
 import threading
+
+import constants
 import db
 import struct
-import pickle
-import random
-import time
+from encryption import *
+import telegram_bot
+import asyncio
 
 
 class Client:
@@ -17,10 +19,12 @@ class Client:
 
 
 class User(Client):
-    def __init__(self, client_socket, user_id):
+    def __init__(self, client_socket, username, user_id, chat_id):
         super().__init__(client_socket)
+        self.username = username
         self.user_id = user_id
         self.current_camera_id = None
+        self.chat_id = chat_id
         self.ready_for_pic = True
 
 
@@ -37,6 +41,7 @@ clients = []
 users = []
 cameras = []
 db_lock = threading.Lock()
+camera_sub_lock = threading.Lock()
 
 
 def handle_client(client_socket):
@@ -44,7 +49,7 @@ def handle_client(client_socket):
 
     if message == "register":
         client_socket.send("Register attempted detected, go on...".encode())
-        register_info = client_socket.recv(1024).decode().split(", ") # 0 - username, 1 - password, 2 - account_type
+        register_info = rsa_decrypt(constants.client_to_server_private_key, client_socket.recv(1024).decode()).split(", ") # 0 - username, 1 - password, 2 - account_type
 
         try:
             db_lock.acquire()
@@ -52,14 +57,25 @@ def handle_client(client_socket):
             db_lock.release()
 
             if register_info[2] == "User":
-                client_socket.send("Phone number needed".encode())
-                phone_num = client_socket.recv(1024).decode()
+                client_socket.send("verification code needed".encode())
+                verif_code = rsa_decrypt(constants.client_to_server_private_key, client_socket.recv(1024).decode())
+                chat_id = ""
+                try:
+                    f = open("chat_id_to_code.txt", "r")
+                    for line in f:
+                        if line.split()[0] == verif_code:
+                            chat_id = line.split()[1]
+                            print(chat_id)
+
+                except Exception as e:
+                    print(e)
+
                 db_lock.acquire()
-                db.create_new_user(register_info[0], phone_num)
+                db.create_new_user(register_info[0], chat_id)
                 db_lock.release()
                 client_socket.send("User account created successfully".encode())
 
-                user = User(client_socket, db.get_user_id(register_info[0]))
+                user = User(client_socket, register_info[0], db.get_user_id(register_info[0]), chat_id)
                 users.append(user)
                 handle_user(user)
 
@@ -73,7 +89,7 @@ def handle_client(client_socket):
                 cameras.append(camera)
                 handle_camera(camera)
 
-        except sqlite3.IntegrityError as e:
+        except sqlite3.IntegrityError:
             client_socket.send("Attempted username is taken".encode())
             db_lock.release()
             handle_client(client_socket)
@@ -81,7 +97,7 @@ def handle_client(client_socket):
 
     elif message == "login":
         client_socket.send("Login attempted detected, go on...".encode())
-        login_info = client_socket.recv(1024).decode().split(", ")  # 0 - username, 1 - password
+        login_info = rsa_decrypt(constants.client_to_server_private_key, client_socket.recv(1024).decode()).split(", ")  # 0 - username, 1 - password
 
         try:
             db_lock.acquire()
@@ -90,7 +106,7 @@ def handle_client(client_socket):
             db_lock.release()
 
             if account_type == "User":
-                user = User(client_socket, db.get_user_id(login_info[0]))
+                user = User(client_socket, login_info[0], db.get_user_id(login_info[0]), db.get_chat_id(login_info[0]))
                 for u in users:
                     if u.user_id == user.user_id:
                         db_lock.acquire()
@@ -101,8 +117,8 @@ def handle_client(client_socket):
 
             elif account_type == "Camera":
                 camera = Camera(client_socket, db.get_camera_id(login_info[0]))
-                for c in cameras:
-                    if c.camera_id == camera.camera_id:
+                for cam in cameras:
+                    if cam.camera_id == camera.camera_id:
                         db_lock.acquire()
                         raise Exception("Camera already logged in")
                 client_socket.send("Camera logged in successfully".encode())
@@ -121,11 +137,24 @@ def handle_user(user):
     while True:
         request = user.client_socket.recv(1024).decode()
 
-
         if "ready_for_pic" in request:
             user.ready_for_pic = True
 
-        elif "switch_camera_request" in request:
+        if "subscribe_to_camera" in request:
+            print(request)
+            camera_sub_lock.acquire()
+            db.subscribe_to_camera(user.username, user.current_camera_id)
+            camera_sub_lock.release()
+
+        if "alert" in request:
+            print(request)
+            camera_sub_lock.acquire()
+            subs = db.get_camera_subscriptions(user.current_camera_id)
+            camera_sub_lock.release()
+
+            threading.Thread(target=send_alert_messages, args=(subs, user.username)).start()
+
+        if "switch_camera_request" in request:
             print(request)
             curr_camera = False
 
@@ -133,7 +162,6 @@ def handle_user(user):
                 if camera.camera_id == user.current_camera_id:
                     curr_camera = True
                     index = cameras.index(camera)
-                    print(f"index: {index}")
 
                     if len(cameras) - 1 > index:
                         user.current_camera_id = cameras[index+1].camera_id
@@ -144,17 +172,22 @@ def handle_user(user):
 
                     break
 
-
             if not curr_camera:
                 try:
                     user.current_camera_id = cameras[0].camera_id
                 except IndexError:
                     print("There aren't any cameras")
 
-            print(user.current_camera_id)
-
-
-
+def send_alert_messages(subs, alerter_name):
+    print(subs)
+    for sub in subs:
+        if True: # sub != alerter_name
+            chat_id = int(db.get_chat_id(sub))
+            print(chat_id)
+            try:
+                asyncio.run(telegram_bot.send_alert_message(chat_id))
+            except:
+                asyncio.create_task(telegram_bot.send_alert_message(chat_id))
 
 def handle_camera(camera):
     while True:
@@ -178,17 +211,13 @@ def handle_camera(camera):
         frame_data = received_data[:msg_size]
         received_data = received_data[msg_size:]
 
-        # Deserialize the received frame
-        received_frame = pickle.loads(frame_data)
-
         camera.client_socket.send("lorem ipsum".encode())
 
         for user in users:
             if user.current_camera_id == camera.camera_id and user.ready_for_pic == True:
                 user.ready_for_pic = False
-                serialized_frame = pickle.dumps(received_frame)
-                message_size = struct.pack("L", len(serialized_frame))
-                user.client_socket.sendall(message_size + serialized_frame)
+                message_size = struct.pack("L", len(frame_data))
+                user.client_socket.sendall(message_size + frame_data)
 
 
 

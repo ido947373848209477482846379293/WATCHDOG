@@ -2,11 +2,14 @@ from customtkinter import *
 import cv2
 from PIL import Image, ImageTk
 import socket
-import pickle
 import struct
 import threading
 import time
 import numpy
+import base64
+
+import constants
+from encryption import *
 
 
 class CameraWindow(CTk):
@@ -15,7 +18,6 @@ class CameraWindow(CTk):
 
         self.video_capture = cv2.VideoCapture(int(input("Enter camera num (test mode): ")))
         width, height = 800, 600
-        # Set the width and height
         self.video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
@@ -25,12 +27,22 @@ class CameraWindow(CTk):
         self.show_camera_button = CTkButton(self, text="Show camera footage", command=self.show_camera_footage)
         self.show_camera_button.pack()
 
+        self.mirrored = False
+        self.mirror_button = CTkButton(self, text="Mirror footage", command=self.mirror_footage)
+        self.mirror_button.pack()
+
+    def mirror_footage(self):
+        self.mirrored = not self.mirrored
+
     def show_camera_footage(self):
         # Capture the video frame by frame
         _, frame = self.video_capture.read()
 
         # Convert image from one color space to other
         opencv_image = cv2.cvtColor(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.COLOR_BGR2RGBA)
+
+        if self.mirrored:
+            opencv_image = numpy.flip(opencv_image, axis=1)
 
         # Capture the latest frame and transform to image
         captured_image = Image.fromarray(opencv_image)
@@ -53,19 +65,19 @@ class CameraWindow(CTk):
             ret, frame = self.video_capture.read()
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # Turn frame black and white
 
+            if self.mirrored:
+                frame = numpy.flip(frame, axis=1)
+
             # Compress the frame using JPEG
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 10]
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 50]
             _, encoded_frame = cv2.imencode('.jpg', frame, encode_param)
 
             # Convert the encoded frame to a byte array
             frame_bytes = encoded_frame.tobytes()
 
-            # Serialize the frame to bytes
-            serialized_frame = pickle.dumps(frame_bytes)
-
             # Pack the data size and frame data
-            message_size = struct.pack("L", len(serialized_frame))
-            client_socket.sendall(message_size + serialized_frame)
+            message_size = struct.pack("L", len(frame_bytes))
+            client_socket.sendall(message_size + frame_bytes)
 
             conf = client_socket.recv(1024).decode()
 
