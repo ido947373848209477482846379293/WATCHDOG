@@ -10,7 +10,7 @@ def main():
     conn = sqlite3.connect("watchdog.db")
     conn.execute("PRAGMA foreign_keys = ON;")
 
-    # create ACCOUNT table
+    # create Account table
     conn.execute(''' CREATE TABLE IF NOT EXISTS Account
                        ( name TEXT NOT NULL UNIQUE PRIMARY KEY,
                         password TEXT NOT NULL) ''')
@@ -28,6 +28,12 @@ def main():
                        name TEXT NOT NULL,
                        linked_users TEXT NOT NULL, 
                        FOREIGN KEY(name) REFERENCES Account(name)) ''')
+
+    # create / delete and create Telegram chat ID to verification code table
+    conn.execute('''DROP TABLE IF EXISTS ChatIDs''')
+    conn.execute(''' CREATE TABLE IF NOT EXISTS ChatIDs
+                     ( chat_id TEXT NOT NULL,
+                       verif_code TEXT NOT NULL ) ''')
 
     conn.close()
 
@@ -71,6 +77,16 @@ def create_new_camera(name):
     conn.close()
 
 
+def create_new_chat_id_verif_code(chat_id, verif_code):
+    conn = sqlite3.connect("watchdog.db")
+
+    conn.execute("INSERT INTO ChatIDs (chat_id, verif_code) VALUES (?, ?)",
+                 [rsa_encrypt(constants.server_to_db_public_key, chat_id), rsa_encrypt(constants.server_to_db_public_key, verif_code)])
+
+    conn.commit()
+    conn.close()
+
+
 def login(name, password):
     result = None
     conn = sqlite3.connect("watchdog.db")
@@ -92,6 +108,16 @@ def login(name, password):
     if result is not None:
         raise result
 
+
+def get_chat_id_from_verif_code(verif_code):
+    conn = sqlite3.connect("watchdog.db")
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM ChatIDs WHERE verif_code = ?', (rsa_encrypt(constants.server_to_db_public_key, verif_code),))
+    chat_id = rsa_decrypt(constants.server_to_db_private_key, cursor.fetchone()[0])
+
+    conn.close()
+    return chat_id
 
 def get_chat_id(name):
     conn = sqlite3.connect("watchdog.db")

@@ -2,14 +2,23 @@ from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
 import random
 import constants
-import os
+import db
+import requests
 
 
 BOT_TOKEN = constants.TELEGRAM_BOT_TOKEN
-bot = Bot(BOT_TOKEN)
 
-async def send_alert_message(chat_id):
-    await bot.send_message(chat_id=chat_id, text="Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor")
+def send_telegram_message(chat_id, message):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message}
+
+    try:
+        response = requests.post(url, data=payload)
+        response.raise_for_status()
+        return True
+    except requests.RequestException as e:
+        print(f"Failed to send message: {e}")
+        return False
 
 def generate_six_digit_code():
     return random.randint(100000, 999999)
@@ -20,16 +29,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_message(chat_id=chat_id, text=f"Your verification code is: {verif_code}")
 
-    f = open("chat_id_to_code.txt", "a")
-    f.write(f"{verif_code} {chat_id}\n")
-    f.close()
+    db.create_new_chat_id_verif_code(str(chat_id), str(verif_code))
 
 def main():
-    if os.path.exists("chat_id_to_code.txt"):
-        os.remove("chat_id_to_code.txt")
-    f = open("chat_id_to_code.txt", "x")
-    f.close()
-
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.run_polling()
